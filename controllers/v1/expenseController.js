@@ -1,4 +1,7 @@
 const { Op } = require('sequelize') //it helps with date range
+const path = require('path');
+const fs = require('fs');
+const { createObjectCsvWriter } = require('csv-writer');
 const Expense = require('../../models/Expense');
 const Category = require('../../models/Category');
 const { checkMonthlyBudget } = require('../../utils/shared')
@@ -95,6 +98,7 @@ const getExpensesHandler = async (req, res) => {
                     UserId: user.id,
                     CategoryId: category.id,
                 },
+                order: [['createdAt', 'DESC']], //sort by date
             });
             return res.status(200).json(expenses);
         }
@@ -108,10 +112,12 @@ const getExpensesHandler = async (req, res) => {
 
             const expenses = await Expense.findAll({
                 where: {
+                    UserId: user.id,
                     narration: {
                         [Op.like]: `%${search}%`,
                     },
                 },
+                order: [['createdAt', 'DESC']],
             });
             return res.status(200).json(expenses);
         }
@@ -121,6 +127,7 @@ const getExpensesHandler = async (req, res) => {
             where: {
                 UserId: user.id,
             },
+            order: [['createdAt', 'DESC']],
         });
 
         if (startDate && endDate){
@@ -312,6 +319,55 @@ const getExpenseSummaryHandler = async (req, res) => {
     }
 };
 
+// @desc Download Expense Statment
+// @route GET /v1/expenses/statment/download
+// @access Private
+const downloadExpenseStatementHandler = async (req, res) => {
+    try{
+        const expenses = await Expense.findAll({
+            where: {
+                UserId: req.user.id,
+            },
+        });
+        console.log("__dirname", __dirname);
+        const filePath = path.join(__dirname, 'expenses.csv');
+
+        const csvWriter = createObjectCsvWriter({
+            path: filePath,
+            header: [
+                {id: 'id', title: 'ID'},
+                {id: 'amount', title: 'Amount'},
+                {id: 'narration', title: 'Narration'},
+                {id: 'createdAt', title: 'Created At'},
+            ]
+        });
+
+        const expenseData = expenses.map(expense => {
+            return {
+                id: expense.id,
+                amount: expense.amount,
+                narration: expense.narration,
+                createdAt: expense.createdAt.toISOString().split('T')[0],
+            }
+        });
+
+        await csvWriter.writeRecords(expenseData); // returns a promise
+        res.download(filePath, 'expenses.csv', (error) => {
+            if (error) {
+                return res.status(500).json({
+                    message: error.message,
+                });
+            }
+            fs.unlinkSync(filePath); // Delete the file after download is complete from the server or else it will keep piling up on the server storage space 
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message,
+        });
+    }
+
+};
 module.exports = {
     createExpenseHandler,
     getExpensesHandler,
@@ -319,6 +375,7 @@ module.exports = {
     updateExpenseHandler,
     deleteExpenseHandler,
     getExpenseSummaryHandler,
+    downloadExpenseStatementHandler,
 };
 
 // create expense
